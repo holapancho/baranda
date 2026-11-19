@@ -16,10 +16,36 @@ What sets it apart:
 
 ## Status
 
-Design phase. No code yet.
+Early development. `guard` (the policy layer) is implemented and tested; connectors, agents and
+the demo come next.
 
 [`docs/PLAN.md`](docs/PLAN.md) is the single source of truth: vision, decisions, architecture and plan.
 Exploratory ideas live in [`docs/ideas/`](docs/ideas/).
+
+## Development
+
+Requires Python ≥ 3.11 and [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv sync
+```
+
+```bash
+uv run pytest
+```
+
+Using `guard` directly:
+
+```python
+from baranda import Guard
+
+guard = Guard("/path/to/repo", ["connector.yaml", "policy/user.yaml"])
+guard.run(["git", "log", "--oneline", "-5"])  # allowed by the connector's grant
+guard.run(["rm", "-rf", "build"])             # raises Denied: "rm is not allowed (base)"
+```
+
+The built-in enforced policy ([`core/src/baranda/guard/base.yaml`](core/src/baranda/guard/base.yaml))
+is always loaded first and cannot be removed by lower layers.
 
 ## License
 

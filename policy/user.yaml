@@ -1,0 +1,15 @@
+# Your own restrictions. This layer can only take things away: it cannot allow commands,
+# change forced arguments or environment, or raise limits. Mounted read-only into connectors.
+mode: restrict
+
+# Examples:
+# deny_commands: [jq]
+# only_commands: [git, rg]
+# commands:
+#   git:
+#     subcommands: [log, show]
+#     deny_flags: [--patch, -p]
+# limits:
+#   timeout_seconds: 10
+# paths:
+#   deny_globs: ["secrets/**"]

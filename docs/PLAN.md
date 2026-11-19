@@ -31,7 +31,7 @@ The differentiator is **not** the agent loop (that already exists). It is this:
 | Tools | MCP servers using the official `mcp` SDK, one per connector |
 | Agent ↔ agent | A2A (ADK provides it: `to_a2a`) |
 | Model | Gemini free tier (`GOOGLE_API_KEY`); GitHub Models and OpenRouter via `LiteLlm` |
-| Shared core | `guard` library + `baranda-base` Docker image, with `base.yaml` baked in |
+| Shared core | `guard` library (with the enforced `base.yaml` shipped inside the package) + `baranda-base` Docker image |
 | Repos | One for now (`core/` + `connectors/`); split once `guard` is stable |
 | Skills | `SKILL.md` format (agentskills.io), custom registry that reads from disk, **no scripts** |
 | Risky actions | MVP only blocks; no interactive confirmation |
@@ -177,12 +177,31 @@ Effects: `guard.run` (commands) and `guard.read` (files) in the MVP; `guard.http
 
 Possible decisions: `Allow`, `Deny(reason)` and, in phase 2, `NeedsApproval`.
 
+### Layer modes
+
+Every policy file declares a `mode`, and the mode limits which keys it may contain. A file with a
+key its mode does not allow is rejected (and `guard` refuses to start), so a `restrict` layer cannot
+widen access by construction.
+
+| Mode | Who | May contain |
+|---|---|---|
+| `enforced` | The built-in `base.yaml`, shipped inside the package and always loaded first | `deny_commands`, per-command `deny_flags`, forced `prefix_args` / `subcommand_args` / `env`, `tools` restrictions, `limits` caps, `paths.deny_globs` |
+| `grant` | A connector's `policy.yaml`; the only mode that can allow commands | `commands` (with `subcommands`, `deny_flags`, `env`, `ok_exit_codes`), `tools` (may enable), plus anything restrictive |
+| `restrict` | `user.yaml` (later: team, tenant) | `deny_commands`, `only_commands`, per-command `subcommands` (intersected) and `deny_flags`, `tools` restrictions, `limits` caps, `paths.deny_globs` |
+
+Merging: deny lists are unioned, subcommands and `one_of` sets are intersected, limits take the
+minimum, enforced env wins. Each denial names the layer that caused it. Policy files are reloaded
+when they change; if a reload fails, everything is denied until the files are fixed.
+
+Command names that YAML reads as booleans (`yes`, `no`, `on`, `off`) must be quoted; unquoted they
+are rejected as invalid names.
+
 ### What `guard.run()` does
 
-1. Merges layers: `base.yaml` (enforced) → connector `policy.yaml` → `user.yaml`. Deny wins; lower levels can only restrict.
-2. Checks binary, subcommand (`argv[1]`) and flags.
-3. Checks that every path stays inside `/workspace`.
-4. Runs without a shell, with a clean environment, a timeout and an output limit.
+1. Merges layers: built-in `base.yaml` (enforced) → connector `policy.yaml` (grant) → `user.yaml` (restrict).
+2. Checks binary (by name, never by path), subcommand (`argv[1]`) and flags (long, `--flag=value` and clustered short flags).
+3. Checks that every path-like argument stays inside the workspace and does not match `paths.deny_globs`.
+4. Builds the final argv with the forced arguments, and runs it without a shell, with a clean environment (`HOME=/nonexistent`, fixed `PATH`), a timeout and a hard output limit (`RLIMIT_FSIZE`).
 5. Records the decision (audit + span) and returns the output or the reason.
 
 ### Known risks the policy must cover
@@ -192,27 +211,38 @@ Blocking by command name is not enough. "Read-only" commands can run code or wri
 - `rg --pre <cmd>` runs a program per file.
 - `git diff --output=file` writes to disk; `--ext-diff` and `--textconv` run programs.
 - `git -c core.pager=...` runs a program (blocked by requiring `argv[1]` to be an allowed subcommand).
-- A malicious repo can ship `core.fsmonitor` in `.git/config`, which runs on `git status`.
-- `curl … | sh` and the like: there is no shell, and `curl` is not on the allowlist.
+- A malicious repo can ship `.git/config` entries that run programs: `core.fsmonitor` (on `git status`), `diff.external`, filter drivers (clean/smudge) and diff drivers (`textconv`, `command`) selected through `.gitattributes`.
+- `curl … | sh` and the like: there is no shell, and `curl`, shells and interpreters are in `deny_commands`.
 
-Git runs with `GIT_CONFIG_NOSYSTEM=1`, `GIT_OPTIONAL_LOCKS=0`, `GIT_PAGER=cat`, no hooks, no
-fsmonitor, and `safe.directory` configured inside the container.
+What `base.yaml` forces on git: `-c` overrides for `safe.directory`, `core.fsmonitor=false`,
+`core.hooksPath=/dev/null`, `core.pager=cat`, `core.attributesFile=/dev/null` and
+`protocol.allow=never`; `--no-pager`; `--no-ext-diff --no-textconv` for `log`, `diff` and `show`; and
+the env `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_OPTIONAL_LOCKS=0`,
+`GIT_ATTR_SOURCE=<empty tree>` (no drivers from `.gitattributes`) and
+`GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS=1` (so `--outp` cannot stand in for `--output`).
 
-Example `policy.yaml`:
+The test suite proves each repo-config attack runs a program with plain git and does not run it
+through `guard`.
+
+Residual risks (not covered yet):
+
+- `$GIT_DIR/info/attributes` is not neutralized by `GIT_ATTR_SOURCE`; verify, and mitigate in the container (read-only mount, unprivileged user).
+- `paths.deny_globs` applies to explicit paths. `rg secret .` still scans a denied file such as `.env`; a connector should force exclusions (for example rg `--glob=!.env`) or the file should not be in the workspace.
+- Long-option abbreviation is handled for git only; other CLIs need exact flag lists.
+
+Example connector `policy.yaml`:
 
 ```yaml
+mode: grant
 commands:
   git:
     subcommands: [log, diff, show, blame, status]
-    deny_flags: [--output, --ext-diff, --textconv]
-    env: { GIT_CONFIG_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0", GIT_PAGER: cat }
   rg:
-    deny_flags: [--pre, --pre-glob]
+    ok_exit_codes: [0, 1]   # 1 = no matches
   fd: {}
   tree: {}
   tokei: {}
   jq: {}
-paths: { root: /workspace, mode: read-only }
 ```
 
 ### Errors
@@ -263,7 +293,7 @@ Tool types:
 - **`run(argv)`**, generic, limited by the allowlist.
 
 The `baranda-base` image ships `guard`, an unprivileged user, safe git settings, the MCP server
-entrypoint and a baked-in `base.yaml` (enforced by construction). A connector only adds its CLIs and
+entrypoint, and `guard` with its built-in `base.yaml` (enforced by construction). A connector only adds its CLIs and
 files. `user.yaml` is mounted read-only from outside.
 
 ### Docker and host files
@@ -369,7 +399,7 @@ trace 7f3a  user=u1  session=s42
       │     └─ guard.exec      git log …  allow        32ms
       ├─ execute_tool run                              3ms
       │  └─ [MCP] run
-      │     └─ guard.exec      rm -rf build  DENY "rm not allowed (base.yaml)"
+      │     └─ guard.exec      rm -rf build  DENY "rm is not allowed (base)"
       └─ call_llm gemini-flash   in 2.1k / out 140     1.1s
 ```
 
@@ -394,9 +424,8 @@ Script:
 baranda/
 ├── pyproject.toml  LICENSE  README.md  .env.example  docker-compose.yml
 ├── core/                          # future "archetype" repo
-│   ├── src/baranda/guard/         # policy · layers · jail · exec · errors · audit
+│   ├── src/baranda/guard/         # policy · commands · jail · execute · errors · audit · base.yaml
 │   ├── docker/base/Dockerfile     # baranda-base image
-│   ├── policy/base.yaml           # enforced, baked into the image
 │   ├── template/                  # copier: generates a new connector
 │   └── tests/
 ├── connectors/                    # future "implementation" repo
@@ -429,8 +458,8 @@ uv run pytest
 
 ## 13. MVP steps
 
-1. **Skeleton:** `uv`, layout, license.
-2. **`guard` with tests** (no API key): levels 1 and 2, layers, jail, errors, fail closed, circuit breaker, audit and spans, `@baranda.tool` decorator. Cases: path escapes (`..`, symlinks), `rm`/`git push`/`reset --hard`/`clean`, `rg --pre`, `git diff --output`, `git -c`, a `user.yaml` that tries to widen access.
+1. **Skeleton:** `uv`, layout, license. *Done.*
+2. **`guard` with tests** (no API key): levels 1 and 2, layers, jail, errors, fail closed, circuit breaker, audit and spans, tool decorator (`guard.tool()`; MCP registration comes with step 3). *Done* (retries apply to `guard.http`, phase 2). Cases: path escapes (`..`, symlinks), `rm`/`git push`/`reset --hard`/`clean`, `rg --pre`, `git diff --output`, `git -c`, a `user.yaml` that tries to widen access.
 3. **`repo_reader` connector (MCP):** `read_file`, `list_dir`, `git_log`, `search`, one composite tool ("weekly summary") and `run`.
 4. **Docker:** `baranda-base`, connector, compose with Jaeger.
 5. **ADK agent:** Gemini + skills + `McpToolset`, exposed over A2A.
