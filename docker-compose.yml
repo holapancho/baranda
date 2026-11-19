@@ -1,0 +1,63 @@
+# Local stack: the repo_reader connector over streamable HTTP, and Jaeger for traces.
+#
+#   BARANDA_REPO=/path/to/repo docker compose up --build
+#
+# MCP endpoint: http://127.0.0.1:8765/mcp   Jaeger UI: http://127.0.0.1:16686
+# Both ports are published on 127.0.0.1 only. The HTTP transport has no authentication yet
+# (phase 2: OIDC), so never publish it on a public interface.
+
+name: baranda
+
+services:
+  # Build-only: produces the baranda-base image that connector images build FROM.
+  base:
+    build:
+      context: .
+      dockerfile: core/docker/base/Dockerfile
+    image: baranda-base:dev
+    entrypoint: ["true"]
+    restart: "no"
+
+  repo-reader:
+    build:
+      context: .
+      dockerfile: connectors/repo_reader/Dockerfile
+      additional_contexts:
+        baranda-base: service:base
+    image: baranda-repo-reader:dev
+    command:
+      - --transport=http
+      - --host=0.0.0.0
+      - --port=8000
+      - --allow-unauthenticated
+      - --allowed-host=repo-reader:*
+      - --allowed-host=127.0.0.1:*
+      - --allowed-host=localhost:*
+    environment:
+      BARANDA_USER: ${BARANDA_USER:-local}
+      BARANDA_USER_POLICY: /etc/baranda/user.yaml
+      BARANDA_AUDIT_LOG: /var/lib/baranda/audit.jsonl
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_SERVICE_NAME: baranda-repo-reader
+    volumes:
+      - ${BARANDA_REPO:-.}:/workspace:ro
+      - ./policy/user.yaml:/etc/baranda/user.yaml:ro
+      - audit:/var/lib/baranda
+    ports:
+      - "127.0.0.1:8765:8000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - jaeger
+
+  jaeger:
+    image: jaegertracing/jaeger:2.11.0
+    ports:
+      - "127.0.0.1:16686:16686"
+
+volumes:
+  audit:

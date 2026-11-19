@@ -444,6 +444,7 @@ baranda/
 │   └── repo_reader/               # server.py · policy.yaml · skills/ · Dockerfile
 ├── agents/repo_reader/agent.py    # ADK agent (McpToolset), exposed over A2A
 ├── policy/user.yaml               # mounted; can only restrict
+├── scripts/docker_smoke.py         # end-to-end checks for the images (stdio and HTTP)
 ├── demo/setup.sh
 └── docs/
     ├── PLAN.md                    # this document (SSOT)
@@ -473,7 +474,7 @@ uv run pytest
 1. **Skeleton:** `uv`, layout, license. *Done.*
 2. **`guard` with tests** (no API key): levels 1 and 2, layers, jail, errors, fail closed, circuit breaker, audit and spans, tool decorator (`guard.tool()`; MCP registration comes with step 3). *Done* (retries apply to `guard.http`, phase 2). Cases: path escapes (`..`, symlinks), `rm`/`git push`/`reset --hard`/`clean`, `rg --pre`, `git diff --output`, `git -c`, a `user.yaml` that tries to widen access.
 3. **`repo_reader` connector (MCP):** `list_dir`, `read_file`, `search`, `git_log`, `git_show`, `git_blame`, a composite `weekly_summary`, and `run`; plus its skill. *Done* (stdio transport).
-4. **Docker:** `baranda-base`, connector, compose with Jaeger.
+4. **Docker:** `baranda-base`, connector, compose with Jaeger. *Done*: images run as uid 10001 with a read-only root filesystem, no capabilities and the repository mounted read-only; the connector also speaks streamable HTTP (loopback by default; a non-loopback bind requires `--allow-unauthenticated`); spans are exported over OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (`otel` extra). CI builds the images and runs `scripts/docker_smoke.py` over stdio and HTTP, including a check that spans reach Jaeger.
 5. **ADK agent:** Gemini + skills + `McpToolset`, exposed over A2A.
 6. **Demo:** the three scenes, a trace with latencies and an eval for the injection.
 

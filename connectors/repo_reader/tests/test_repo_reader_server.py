@@ -151,3 +151,11 @@ def test_user_policy_and_audit(repo, tmp_path, monkeypatch):
     assert {r["user"] for r in records} == {"ada@example.com"}
     assert records[0]["decision"] == "deny" and records[0]["tool"] == "run"
     assert verify(audit) == len(records)
+
+
+def test_http_on_a_public_address_requires_explicit_opt_in(repo):
+    from baranda_repo_reader.server import main
+
+    with pytest.raises(SystemExit) as info:
+        main(["--workspace", str(repo), "--transport", "http", "--host", "0.0.0.0"])
+    assert info.value.code == 2

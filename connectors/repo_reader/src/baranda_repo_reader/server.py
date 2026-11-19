@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 
 from baranda.guard import AuditLog, Guard
 from baranda.mcp import tool
+from baranda.telemetry import configure as configure_telemetry
 
 INSTRUCTIONS = """\
 Read-only tools for exploring one git repository.
@@ -137,17 +139,51 @@ def create_server(
     return server, guard
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="baranda repo_reader MCP server (stdio).")
-    parser.add_argument("--workspace", default=os.environ.get("BARANDA_WORKSPACE", "/workspace"),
+LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+def main(argv: list[str] | None = None) -> None:
+    env = os.environ.get
+    parser = argparse.ArgumentParser(description="baranda repo_reader MCP server.")
+    parser.add_argument("--workspace", default=env("BARANDA_WORKSPACE", "/workspace"),
                         help="repository to expose (default: $BARANDA_WORKSPACE or /workspace)")
-    parser.add_argument("--user-policy", default=os.environ.get("BARANDA_USER_POLICY"),
+    parser.add_argument("--user-policy", default=env("BARANDA_USER_POLICY"),
                         help="optional restrict-mode policy file (default: $BARANDA_USER_POLICY)")
-    parser.add_argument("--audit-log", default=os.environ.get("BARANDA_AUDIT_LOG"),
+    parser.add_argument("--audit-log", default=env("BARANDA_AUDIT_LOG"),
                         help="append-only audit log path (default: $BARANDA_AUDIT_LOG; memory only if unset)")
-    args = parser.parse_args()
+    parser.add_argument("--transport", choices=["stdio", "http"], default=env("BARANDA_TRANSPORT", "stdio"),
+                        help="stdio (default) or streamable HTTP at /mcp")
+    parser.add_argument("--host", default=env("BARANDA_HOST", "127.0.0.1"), help="HTTP bind address")
+    parser.add_argument("--port", type=int, default=int(env("BARANDA_PORT", "8000")), help="HTTP port")
+    parser.add_argument("--allowed-host", action="append", default=None,
+                        help="accepted Host header for HTTP, e.g. 'repo-reader:*' (repeatable)")
+    parser.add_argument("--allow-unauthenticated", action="store_true",
+                        default=env("BARANDA_ALLOW_UNAUTHENTICATED") == "1",
+                        help="allow HTTP on a non-loopback address without authentication "
+                             "(only inside a private network such as docker compose)")
+    args = parser.parse_args(argv)
+
+    if args.transport == "http" and args.host not in LOOPBACK and not args.allow_unauthenticated:
+        parser.error(
+            f"refusing to serve HTTP on {args.host} without authentication; bind to 127.0.0.1, or pass "
+            "--allow-unauthenticated only on a private network"
+        )
+
+    configure_telemetry("baranda-repo-reader")
     server, _ = create_server(args.workspace, user_policy=args.user_policy, audit_log=args.audit_log)
-    server.run("stdio")
+    if args.transport == "stdio":
+        server.run("stdio")
+        return
+
+    allowed = args.allowed_host or [
+        h for h in (env("BARANDA_ALLOWED_HOSTS") or "").split(",") if h
+    ] or ["127.0.0.1:*", "localhost:*"]
+    server.run(
+        "streamable-http",
+        host=args.host,
+        port=args.port,
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=allowed),
+    )
 
 
 if __name__ == "__main__":

@@ -48,3 +48,35 @@ jobs:
 
       - name: Test
         run: uv run pytest
+
+  docker:
+    name: docker images (build + smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Build images
+        run: docker compose build
+
+      - name: Smoke test over stdio (docker run -i, read-only mount, no network)
+        run: uv run python scripts/docker_smoke.py stdio
+
+      - name: Start the stack
+        run: docker compose up -d repo-reader jaeger
+
+      - name: Smoke test over HTTP, and spans in Jaeger
+        run: uv run python scripts/docker_smoke.py http
+
+      - name: Logs
+        if: failure()
+        run: docker compose logs
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v

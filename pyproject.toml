@@ -3,7 +3,7 @@ name = "baranda-workspace"
 version = "0.0.0"
 description = "Development workspace for baranda."
 requires-python = ">=3.11"
-dependencies = ["baranda[mcp]", "baranda-repo-reader"]
+dependencies = ["baranda[mcp,otel]", "baranda-repo-reader"]
 
 [tool.uv]
 package = false
