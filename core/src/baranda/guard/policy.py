@@ -57,6 +57,7 @@ class CommandRule:
     subcommand_args: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     env: Mapping[str, str] = field(default_factory=dict)
     ok_exit_codes: frozenset[int] = frozenset({0})
+    non_path_flags: frozenset[str] = frozenset()  # flags whose value is data (a pattern), not a path
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,7 @@ _TOP_KEYS = {
 }
 _COMMAND_KEYS = {
     LayerMode.ENFORCED: {"deny_flags", "prefix_args", "subcommand_args", "env"},
-    LayerMode.GRANT: {"subcommands", "deny_flags", "env", "ok_exit_codes"},
+    LayerMode.GRANT: {"subcommands", "deny_flags", "env", "ok_exit_codes", "non_path_flags"},
     LayerMode.RESTRICT: {"subcommands", "deny_flags"},
 }
 _TOOL_KEYS = {"enabled", "args"}
@@ -159,12 +160,13 @@ def _validate(layer: Layer) -> None:
             raise _fail(name, f"invalid command name: {command!r}")
         where = f"commands.{command}"
         rule = _check_keys(name, where, rule or {}, _COMMAND_KEYS[mode])
-        for key in ("subcommands", "deny_flags", "prefix_args"):
+        for key in ("subcommands", "deny_flags", "prefix_args", "non_path_flags"):
             if key in rule:
                 _str_list(name, f"{where}.{key}", rule[key])
-        for flag in rule.get("deny_flags", []):
-            if not flag.startswith("-"):
-                raise _fail(name, f"{where}.deny_flags entries must start with '-': {flag!r}")
+        for key in ("deny_flags", "non_path_flags"):
+            for flag in rule.get(key, []):
+                if not flag.startswith("-"):
+                    raise _fail(name, f"{where}.{key} entries must start with '-': {flag!r}")
         if "subcommand_args" in rule:
             sub_args = _check_keys(name, f"{where}.subcommand_args", rule["subcommand_args"], set(rule["subcommand_args"]))
             for sub, args in sub_args.items():
@@ -271,6 +273,7 @@ def merge(layers: Sequence[Layer]) -> Policy:
                 deny_flags={flag: layer.name for flag in raw.get("deny_flags", [])},
                 env=dict(raw.get("env", {})),
                 ok_exit_codes=frozenset(raw.get("ok_exit_codes", [0])),
+                non_path_flags=frozenset(raw.get("non_path_flags", [])),
             )
 
     # 2. Every layer can deny, restrict and cap.

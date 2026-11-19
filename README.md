@@ -16,8 +16,9 @@ What sets it apart:
 
 ## Status
 
-Early development. `guard` (the policy layer) is implemented and tested; connectors, agents and
-the demo come next.
+Early development. `guard` (the policy layer) and the first connector,
+[`repo_reader`](connectors/repo_reader/) (an MCP server for read-only repository exploration), are
+implemented and tested. Docker images, the ADK agent and the demo come next.
 
 [`docs/PLAN.md`](docs/PLAN.md) is the single source of truth: vision, decisions, architecture and plan.
 Exploratory ideas live in [`docs/ideas/`](docs/ideas/).

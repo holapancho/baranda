@@ -3,20 +3,21 @@ name = "baranda-workspace"
 version = "0.0.0"
 description = "Development workspace for baranda."
 requires-python = ">=3.11"
-dependencies = ["baranda"]
+dependencies = ["baranda[mcp]", "baranda-repo-reader"]
 
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
-members = ["core"]
+members = ["core", "connectors/*"]
 
 [tool.uv.sources]
 baranda = { workspace = true }
+baranda-repo-reader = { workspace = true }
 
 [dependency-groups]
 dev = ["pytest>=8"]
 
 [tool.pytest.ini_options]
-testpaths = ["core/tests"]
+testpaths = ["core/tests", "connectors"]
 addopts = "-ra"

@@ -103,15 +103,21 @@ def prepare(policy: Policy, jail: Jail, argv: Sequence[str]) -> PreparedCommand:
         subcommand = rest.pop(0)
 
     end_of_options = False
+    value_is_data = False  # the previous arg was a non-path flag that takes the next arg as its value
     for arg in rest:
-        if end_of_options:
+        if value_is_data:
+            value_is_data = False
+        elif end_of_options:
             _check_path(arg, jail, policy)
         elif arg == "--":
             end_of_options = True
         elif arg.startswith("-") and arg != "-":
             _check_flag(arg, rule.deny_flags, binary)
-            if arg.startswith("--") and "=" in arg:
-                _check_path(arg.split("=", 1)[1], jail, policy)
+            name, has_value, value = arg.partition("=")
+            if arg in rule.non_path_flags:
+                value_is_data = True
+            elif arg.startswith("--") and has_value and name not in rule.non_path_flags:
+                _check_path(value, jail, policy)
         else:
             _check_path(arg, jail, policy)
 

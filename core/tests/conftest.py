@@ -15,6 +15,7 @@ commands:
     subcommands: [log, diff, show, blame, status]
   rg:
     ok_exit_codes: [0, 1]
+    non_path_flags: [-e, --regexp]
   jq: {}
   # test-only grants
   printenv: {}

@@ -1,0 +1,28 @@
+# repo_reader connector policy. The built-in base.yaml (enforced) is always applied on top:
+# it forces safe git settings and denies dangerous commands and flags.
+mode: grant
+description: repo_reader - read-only exploration of a git repository
+
+commands:
+  git:
+    subcommands: [log, show, diff, blame, status, shortlog, ls-files, rev-parse]
+  rg:
+    ok_exit_codes: [0, 1]  # 1 = no matches
+    # Values of these flags are patterns or globs, not paths to read.
+    non_path_flags: [-e, --regexp, -g, --glob, --iglob]
+  fd: {}
+  tree: {}
+  tokei: {}
+  jq: {}
+
+tools:
+  git_show:
+    args:
+      # A revision, never a flag.
+      rev: {pattern: "(?!-)[A-Za-z0-9._/~^@{}:-]{1,200}"}
+  git_log:
+    args:
+      since: {pattern: "(?!-)[A-Za-z0-9 :.,-]{1,40}"}
+  search:
+    args:
+      pattern: {max_length: 500}
