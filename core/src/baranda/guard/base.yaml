@@ -52,6 +52,11 @@ commands:
       - --upload-pack
       - --receive-pack
       - --exec
+      # Recursing into a submodule starts a child git that reads the submodule's own config and
+      # info/attributes, whose drivers neutralize_config below cannot see. Keep git out of submodules.
+      - --ignore-submodules
+      - --submodule
+      - --recurse-submodules
     # Neutralize repo-level config that runs programs (a malicious repo can ship .git/config).
     prefix_args:
       - -c
@@ -66,11 +71,35 @@ commands:
       - core.attributesFile=/dev/null
       - -c
       - protocol.allow=never
+      - -c
+      - diff.ignoreSubmodules=all
+      - -c
+      - status.submoduleSummary=false
+      - -c
+      - submodule.recurse=false
       - --no-pager
     subcommand_args:
-      log: [--no-ext-diff, --no-textconv]
-      diff: [--no-ext-diff, --no-textconv]
-      show: [--no-ext-diff, --no-textconv]
+      # --ignore-submodules here also beats submodule.<name>.ignore from .git/config or .gitmodules.
+      log: [--no-ext-diff, --no-textconv, --ignore-submodules=all]
+      diff: [--no-ext-diff, --no-textconv, --ignore-submodules=all]
+      show: [--no-ext-diff, --no-textconv, --ignore-submodules=all]
+      status: [--ignore-submodules=all]
+      # Plumbing ignores diff.ignoreSubmodules and recurses by default.
+      diff-files: [--ignore-submodules=all]
+      diff-index: [--ignore-submodules=all]
+      blame: [--no-textconv]
+    # $GIT_DIR/info/attributes is read whatever GIT_ATTR_SOURCE says, so attributes can still pick
+    # any driver. Before each call guard lists the repository's config and forces every matching
+    # key to the value here: an empty filter is skipped, an empty textconv or command fails instead
+    # of running anything (the flags above keep log/diff/show/blame working).
+    neutralize_config:
+      filter.*.clean: ""
+      filter.*.smudge: ""
+      filter.*.process: ""
+      filter.*.required: "false"
+      diff.*.textconv: ""
+      diff.*.command: ""
+      merge.*.driver: ""
     env:
       GIT_CONFIG_NOSYSTEM: "1"
       GIT_CONFIG_GLOBAL: /dev/null
@@ -78,6 +107,7 @@ commands:
       GIT_PAGER: cat
       GIT_TERMINAL_PROMPT: "0"
       # Read attributes from the empty tree: no filter or diff drivers from .gitattributes.
+      # ($GIT_DIR/info/attributes is still read: see neutralize_config.)
       GIT_ATTR_SOURCE: 4b825dc642cb6eb9a060e54bf8d69288fbee4904
       GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS: "1"
   rg:

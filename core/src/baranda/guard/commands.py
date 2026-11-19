@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -75,6 +77,42 @@ def _check_flag(arg: str, deny_flags: Mapping[str, str], binary: str) -> None:
             raise Denied(f"flag {flag} is not allowed for {binary} ({deny_flags[flag]})", layer=deny_flags[flag])
 
 
+def _neutralize_git_config(
+    prefix: Sequence[str], env: dict[str, str], jail: Jail, patterns: Mapping[str, str], timeout: float
+) -> None:
+    """Force every config key matching ``patterns`` to its value, whatever driver name it uses.
+
+    Attributes can select a driver from places no flag or env turns off (``$GIT_DIR/info/attributes``),
+    so the drivers themselves are blanked. Their names are only known from the repository's config:
+    list it with the same env and forced arguments the command will run with (same includes, same
+    repository), then add the overrides through ``GIT_CONFIG_COUNT``, which takes the key verbatim
+    (``-c`` would split a subsection name containing ``=``) and wins over repository config.
+    """
+    argv = ["git", *prefix, "config", "--list", "--name-only", "-z"]
+    try:
+        proc = subprocess.run(
+            argv, cwd=jail.root, env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout, check=False
+        )
+    except subprocess.TimeoutExpired:
+        raise ToolError(ErrorKind.UNAVAILABLE, "timed out reading git config") from None
+    except FileNotFoundError:
+        raise ToolError(ErrorKind.UNAVAILABLE, "command not available: git") from None
+    if proc.returncode != 0:
+        detail = proc.stderr.decode("utf-8", errors="replace").strip()
+        raise ToolError(ErrorKind.UNAVAILABLE, f"could not read git config: {detail}")
+
+    keys = dict.fromkeys(k.decode("utf-8", errors="surrogateescape") for k in proc.stdout.split(b"\0") if k)
+    count = int(env.get("GIT_CONFIG_COUNT", "0"))
+    for key in keys:
+        value = next((v for pattern, v in patterns.items() if fnmatchcase(key, pattern)), None)
+        if value is not None:
+            env[f"GIT_CONFIG_KEY_{count}"] = key
+            env[f"GIT_CONFIG_VALUE_{count}"] = value
+            count += 1
+    if count:
+        env["GIT_CONFIG_COUNT"] = str(count)
+
+
 def prepare(policy: Policy, jail: Jail, argv: Sequence[str]) -> PreparedCommand:
     if isinstance(argv, str) or not isinstance(argv, Sequence) or not argv:
         raise ToolError(ErrorKind.INVALID_INPUT, "argv must be a non-empty list of strings")
@@ -121,7 +159,8 @@ def prepare(policy: Policy, jail: Jail, argv: Sequence[str]) -> PreparedCommand:
         else:
             _check_path(arg, jail, policy)
 
-    final = [binary, *(_render(a, jail) for a in rule.prefix_args)]
+    prefix = [_render(a, jail) for a in rule.prefix_args]
+    final = [binary, *prefix]
     if subcommand is not None:
         final.append(subcommand)
         final.extend(_render(a, jail) for a in rule.subcommand_args.get(subcommand, ()))
@@ -129,6 +168,8 @@ def prepare(policy: Policy, jail: Jail, argv: Sequence[str]) -> PreparedCommand:
 
     env = _base_env()
     env.update({key: _render(value, jail) for key, value in rule.env.items()})
+    if rule.neutralize_config:
+        _neutralize_git_config(prefix, env, jail, rule.neutralize_config, policy.limits.timeout_seconds)
 
     return PreparedCommand(
         argv=tuple(final),

@@ -58,6 +58,7 @@ class CommandRule:
     env: Mapping[str, str] = field(default_factory=dict)
     ok_exit_codes: frozenset[int] = frozenset({0})
     non_path_flags: frozenset[str] = frozenset()  # flags whose value is data (a pattern), not a path
+    neutralize_config: Mapping[str, str] = field(default_factory=dict)  # git config key glob -> forced value
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,7 @@ _TOP_KEYS = {
     },
 }
 _COMMAND_KEYS = {
-    LayerMode.ENFORCED: {"deny_flags", "prefix_args", "subcommand_args", "env"},
+    LayerMode.ENFORCED: {"deny_flags", "prefix_args", "subcommand_args", "env", "neutralize_config"},
     LayerMode.GRANT: {"subcommands", "deny_flags", "env", "ok_exit_codes", "non_path_flags"},
     LayerMode.RESTRICT: {"subcommands", "deny_flags"},
 }
@@ -171,11 +172,14 @@ def _validate(layer: Layer) -> None:
             sub_args = _check_keys(name, f"{where}.subcommand_args", rule["subcommand_args"], set(rule["subcommand_args"]))
             for sub, args in sub_args.items():
                 _str_list(name, f"{where}.subcommand_args.{sub}", args)
-        if "env" in rule:
-            env = _check_keys(name, f"{where}.env", rule["env"], set(rule["env"]))
-            for key, value in env.items():
-                if not isinstance(key, str) or not isinstance(value, str):
-                    raise _fail(name, f"{where}.env must map strings to strings")
+        for key in ("env", "neutralize_config"):
+            if key in rule:
+                mapping = _check_keys(name, f"{where}.{key}", rule[key], set(rule[key]))
+                for k, v in mapping.items():
+                    if not isinstance(k, str) or not k or not isinstance(v, str):
+                        raise _fail(name, f"{where}.{key} must map non-empty strings to strings")
+        if "neutralize_config" in rule and command != "git":
+            raise _fail(name, f"{where}.neutralize_config is only supported for git")
         if "ok_exit_codes" in rule:
             codes = rule["ok_exit_codes"]
             if not isinstance(codes, list) or not all(type(c) is int for c in codes):
@@ -309,6 +313,8 @@ def merge(layers: Sequence[Layer]) -> Policy:
                     updates["subcommand_args"] = merged
                 if "env" in raw:
                     updates["env"] = {**rule.env, **raw["env"]}  # enforced env wins
+                if "neutralize_config" in raw:
+                    updates["neutralize_config"] = {**rule.neutralize_config, **raw["neutralize_config"]}
                 commands[command] = replace(rule, **updates)
 
         for tool, raw in (data.get("tools") or {}).items():
@@ -347,6 +353,7 @@ def merge(layers: Sequence[Layer]) -> Policy:
             deny_flags=MappingProxyType(dict(rule.deny_flags)),
             subcommand_args=MappingProxyType(dict(rule.subcommand_args)),
             env=MappingProxyType(dict(rule.env)),
+            neutralize_config=MappingProxyType(dict(rule.neutralize_config)),
         )
         for name, rule in commands.items()
     }

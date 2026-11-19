@@ -213,21 +213,40 @@ Blocking by command name is not enough. "Read-only" commands can run code or wri
 - `git diff --output=file` writes to disk; `--ext-diff` and `--textconv` run programs.
 - `git -c core.pager=...` runs a program (blocked by requiring `argv[1]` to be an allowed subcommand).
 - A malicious repo can ship `.git/config` entries that run programs: `core.fsmonitor` (on `git status`), `diff.external`, filter drivers (clean/smudge) and diff drivers (`textconv`, `command`) selected through `.gitattributes`.
+- The same drivers selected through `$GIT_DIR/info/attributes`, which `GIT_ATTR_SOURCE` does not cover and no git option or env turns off. Verified with git 2.43: with `core.attributesFile=/dev/null` and `GIT_ATTR_SOURCE=<empty tree>`, a `filter` runs on `git diff` and `git status` (also via a `[attr]` macro, and as a `process` filter), and a `textconv` runs on `git blame`, which uses textconv by default.
+- A populated submodule: `git status` and `git diff` start a child git in it, which reads the submodule's own config and `info/attributes`.
 - `curl … | sh` and the like: there is no shell, and `curl`, shells and interpreters are in `deny_commands`.
 
 What `base.yaml` forces on git: `-c` overrides for `safe.directory`, `core.fsmonitor=false`,
 `core.hooksPath=/dev/null`, `core.pager=cat`, `core.attributesFile=/dev/null` and
-`protocol.allow=never`; `--no-pager`; `--no-ext-diff --no-textconv` for `log`, `diff` and `show`; and
+`protocol.allow=never`, `diff.ignoreSubmodules=all`, `status.submoduleSummary=false` and
+`submodule.recurse=false`; `--no-pager`; `--no-ext-diff --no-textconv --ignore-submodules=all` for
+`log`, `diff` and `show`, `--ignore-submodules=all` for `status`, `diff-files` and `diff-index`
+(plumbing that recurses even by default), and `--no-textconv` for `blame`
+(`--ignore-submodules`, `--submodule` and `--recurse-submodules` are denied, so the caller cannot undo
+it; the forced flag also beats `submodule.<name>.ignore` from `.git/config` or `.gitmodules`); and
 the env `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_OPTIONAL_LOCKS=0`,
 `GIT_ATTR_SOURCE=<empty tree>` (no drivers from `.gitattributes`) and
 `GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS=1` (so `--outp` cannot stand in for `--output`).
+
+Driver names cannot be listed in a static policy, so `base.yaml` has `neutralize_config` (enforced
+layers, git only): glob patterns over config keys (`filter.*.clean`, `filter.*.smudge`,
+`filter.*.process`, `filter.*.required`, `diff.*.textconv`, `diff.*.command`, `merge.*.driver`) with
+the value to force. Before each git call, `guard` runs `git config --list --name-only -z` with the
+same env and forced `-c` arguments as the command (so includes resolve to the same files) and adds
+every matching key through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, which take the
+key verbatim (`-c` splits a subsection name containing `=`) and win over repository config. An empty
+filter is skipped and `required` is forced to `false`, so `git diff`/`git status` show the raw
+content; an empty `textconv` or `command` fails instead of running anything, and the forced
+`--no-textconv`/`--no-ext-diff` keep `log`, `diff`, `show` and `blame` working. If the config cannot
+be read, the call fails (`unavailable`) and nothing runs.
 
 The test suite proves each repo-config attack runs a program with plain git and does not run it
 through `guard`.
 
 Residual risks (not covered yet):
 
-- `$GIT_DIR/info/attributes` is not neutralized by `GIT_ATTR_SOURCE`; verify, and mitigate in the container (read-only mount, unprivileged user).
+- `$GIT_DIR/info/attributes`: closed in `guard` for the repository at the workspace root (see `neutralize_config` above; tests in `test_execute.py` prove each case runs with plain git and not through `guard`). What is left: the config listing assumes git runs on the root repository, which holds because `argv[1]` must be an allowed subcommand (a grant without `subcommands` would let the caller pass `-C`, `--git-dir` or `-c` and is unsafe for other reasons too). Submodule recursion is forced off only for the subcommands listed in `subcommand_args`; a newly granted subcommand that recurses into submodules would start a child git whose drivers `guard` has not listed, so it needs `--ignore-submodules=all` added there (`shortlog`, `ls-files`, `rev-parse` and `blame`, which `repo_reader` grants, were checked and do not recurse). Keep the container mitigation as defense in depth: read-only workspace mount and an unprivileged user.
 - `paths.deny_globs` applies to explicit paths. The `repo_reader` `search` tool excludes them from the scan (`--glob=!<pattern>`), but a generic `run(["rg", "secret", "."])` still scans a denied file such as `.env`; keep such files out of the workspace.
 - Long-option abbreviation is handled for git only; other CLIs need exact flag lists.
 

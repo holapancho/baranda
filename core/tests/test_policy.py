@@ -2,7 +2,7 @@ import pytest
 
 from baranda.guard import Denied, ErrorKind, Guard, PolicyError, ToolError
 
-from .conftest import write
+from .conftest import git, write
 
 
 def denied(guard, argv):
@@ -100,6 +100,24 @@ def test_allowed_git_gets_forced_arguments_and_env(guard, repo):
     assert prepared.cwd == repo.resolve()
 
 
+def test_git_drivers_from_repo_config_are_blanked(guard, repo):
+    git(repo, "config", "filter.a=b.c.clean", "evil")
+    git(repo, "config", "diff.Py.textconv", "evil")
+    git(repo, "config", "diff.Py.xfuncname", "^def")  # not a program: left alone
+    env = guard.check(["git", "status"]).env
+    count = int(env["GIT_CONFIG_COUNT"])
+    overrides = {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(count)}
+    assert overrides == {"filter.a=b.c.clean": "", "diff.Py.textconv": ""}
+
+
+def test_driver_overrides_append_to_config_env_from_a_grant(repo, policy_dir):
+    grant = "mode: grant\ncommands:\n  git:\n    env: {GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: diff.x.textconv, GIT_CONFIG_VALUE_0: y}\n"
+    write(policy_dir / "connector.yaml", grant)
+    env = Guard(repo, [policy_dir / "connector.yaml"]).check(["git", "log"]).env
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert (env["GIT_CONFIG_KEY_1"], env["GIT_CONFIG_VALUE_1"]) == ("diff.x.textconv", "")
+
+
 def test_invalid_argv_is_invalid_input(guard):
     for argv in ([], "git log", ["git", 1], ["rg", "x" * 5000]):
         with pytest.raises(ToolError) as info:
@@ -145,6 +163,8 @@ def test_only_commands(repo, policy_dir):
         "mode: restrict\ncommands:\n  git:\n    env: {GIT_PAGER: sh}\n",
         "mode: restrict\ncommands:\n  git:\n    prefix_args: [-c, core.pager=sh]\n",
         "mode: restrict\ncommands:\n  git:\n    ok_exit_codes: [0, 1]\n",
+        "mode: restrict\ncommands:\n  git:\n    neutralize_config: {filter.*.clean: ''}\n",
+        "mode: grant\ncommands:\n  jq:\n    neutralize_config: {filter.*.clean: ''}\n",
         "mode: restrict\ncommands:\n  rg:\n    non_path_flags: [--pre]\n",
         "mode: restrict\ntools:\n  read_file:\n    enabled: true\n",
         "mode: restrict\ncommands:\n  git:\n    deny_flag: [--patch]\n",

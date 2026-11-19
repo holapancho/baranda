@@ -33,9 +33,9 @@ GIT_ENV = {
 }
 
 
-def git(repo: Path, *args: str) -> str:
-    env = {**os.environ, **GIT_ENV}
-    return subprocess.run(["git", *args], cwd=repo, env=env, check=True, capture_output=True, text=True).stdout
+def git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
+    full_env = {**os.environ, **GIT_ENV, **(env or {})}
+    return subprocess.run(["git", *args], cwd=repo, env=full_env, check=True, capture_output=True, text=True).stdout
 
 
 def write(path: Path, text: str) -> Path:
