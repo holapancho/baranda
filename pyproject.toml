@@ -3,7 +3,11 @@ name = "baranda-workspace"
 version = "0.0.0"
 description = "Development workspace for baranda."
 requires-python = ">=3.11"
-dependencies = ["baranda[mcp,otel]", "baranda-repo-reader"]
+dependencies = [
+    "baranda[mcp,otel]",
+    "baranda-repo-reader",
+    "google-adk[mcp,a2a]>=2.14,<3",
+]
 
 [tool.uv]
 package = false
@@ -19,5 +23,5 @@ baranda-repo-reader = { workspace = true }
 dev = ["pytest>=8"]
 
 [tool.pytest.ini_options]
-testpaths = ["core/tests", "connectors"]
+testpaths = ["core/tests", "connectors", "agents/tests"]
 addopts = "-ra"
