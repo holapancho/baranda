@@ -1,0 +1,110 @@
+# Built-in enforced policy. Shipped inside the package and always loaded first.
+# Lower layers cannot remove anything here: deny wins, and forced arguments and env are applied last.
+mode: enforced
+description: baranda base guardrails
+
+# Never allowed, whatever a connector grants. Shells and interpreters would bypass argv checks.
+deny_commands:
+  - rm
+  - rmdir
+  - mv
+  - cp
+  - dd
+  - shred
+  - truncate
+  - chmod
+  - chown
+  - ln
+  - mkfifo
+  - tee
+  - sh
+  - bash
+  - zsh
+  - dash
+  - fish
+  - env
+  - sudo
+  - su
+  - xargs
+  - find
+  - python
+  - python3
+  - perl
+  - ruby
+  - node
+  - curl
+  - wget
+  - nc
+  - ncat
+  - ssh
+  - scp
+  - sftp
+  - rsync
+
+commands:
+  git:
+    # Flags that write files or run external programs.
+    deny_flags:
+      - --output
+      - --ext-diff
+      - --textconv
+      - --open-files-in-pager
+      - --upload-pack
+      - --receive-pack
+      - --exec
+    # Neutralize repo-level config that runs programs (a malicious repo can ship .git/config).
+    prefix_args:
+      - -c
+      - safe.directory={root}
+      - -c
+      - core.fsmonitor=false
+      - -c
+      - core.hooksPath=/dev/null
+      - -c
+      - core.pager=cat
+      - -c
+      - core.attributesFile=/dev/null
+      - -c
+      - protocol.allow=never
+      - --no-pager
+    subcommand_args:
+      log: [--no-ext-diff, --no-textconv]
+      diff: [--no-ext-diff, --no-textconv]
+      show: [--no-ext-diff, --no-textconv]
+    env:
+      GIT_CONFIG_NOSYSTEM: "1"
+      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_OPTIONAL_LOCKS: "0"
+      GIT_PAGER: cat
+      GIT_TERMINAL_PROMPT: "0"
+      # Read attributes from the empty tree: no filter or diff drivers from .gitattributes.
+      GIT_ATTR_SOURCE: 4b825dc642cb6eb9a060e54bf8d69288fbee4904
+      GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS: "1"
+  rg:
+    # --pre runs a program per file; -z runs decompressors; -L follows symlinks out of the jail.
+    deny_flags: [--pre, --pre-glob, --search-zip, -z, --follow, -L]
+  fd:
+    deny_flags: [--exec, -x, --exec-batch, -X, --follow, -L]
+  tree:
+    # -o writes a file; -R with -H writes files; -l follows symlinks.
+    deny_flags: [-o, -R, -l]
+
+paths:
+  deny_globs:
+    - .env
+    - .env.*
+    - "*.pem"
+    - "*.key"
+    - "*.p12"
+    - "*.pfx"
+    - id_rsa*
+    - id_ecdsa*
+    - id_ed25519*
+    - .netrc
+    - .npmrc
+    - .pypirc
+
+limits:
+  timeout_seconds: 30
+  max_output_bytes: 1048576
+  max_read_bytes: 1048576
