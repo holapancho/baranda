@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -10,7 +11,9 @@ from .errors import Denied, ErrorKind, ToolError
 from .jail import Jail, matches_any
 from .policy import Policy
 
-DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin"
+# Fixed, never inherited from the caller. On macOS, Homebrew (Apple Silicon) comes first so its
+# newer git is preferred over the system one.
+DEFAULT_PATH = ("/opt/homebrew/bin:" if sys.platform == "darwin" else "") + "/usr/local/bin:/usr/bin:/bin"
 MAX_ARGS = 64
 MAX_ARG_LENGTH = 4096
 
