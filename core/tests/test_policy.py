@@ -74,6 +74,13 @@ def test_paths_outside_workspace_are_denied(guard, argv):
     denied(guard, argv)
 
 
+def test_non_path_flag_values_are_data(guard):
+    guard.check(["rg", "--regexp=/etc/passwd", "."])
+    guard.check(["rg", "-e", "/api/v1", "src"])
+    denied(guard, ["rg", "-e", "x", "/etc"])  # only the flag's own value is exempt
+    denied(guard, ["rg", "--glob=/etc", "x", "/etc"])
+
+
 def test_denied_files_cannot_be_passed_as_arguments(guard, repo):
     write(repo / ".env", "TOKEN=abc")
     assert "pattern" in denied(guard, ["rg", "TOKEN", ".env"]).message
@@ -138,6 +145,7 @@ def test_only_commands(repo, policy_dir):
         "mode: restrict\ncommands:\n  git:\n    env: {GIT_PAGER: sh}\n",
         "mode: restrict\ncommands:\n  git:\n    prefix_args: [-c, core.pager=sh]\n",
         "mode: restrict\ncommands:\n  git:\n    ok_exit_codes: [0, 1]\n",
+        "mode: restrict\ncommands:\n  rg:\n    non_path_flags: [--pre]\n",
         "mode: restrict\ntools:\n  read_file:\n    enabled: true\n",
         "mode: restrict\ncommands:\n  git:\n    deny_flag: [--patch]\n",
         "mode: grantt\n",

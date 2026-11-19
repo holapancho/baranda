@@ -28,7 +28,7 @@ The differentiator is **not** the agent loop (that already exists). It is this:
 | Name | `baranda` (Spanish for "railing"; free on PyPI; no agent projects with that name on GitHub) |
 | Language | Python only (≥ 3.11), with `uv`. Code, comments and docs in English |
 | Agents | Google ADK (`google-adk`, reviewed at 2.14.1), `LlmAgent` (reasons), no workflow agents |
-| Tools | MCP servers using the official `mcp` SDK, one per connector |
+| Tools | MCP servers using the official `mcp` SDK (2.x, `MCPServer`), one per connector |
 | Agent ↔ agent | A2A (ADK provides it: `to_a2a`) |
 | Model | Gemini free tier (`GOOGLE_API_KEY`); GitHub Models and OpenRouter via `LiteLlm` |
 | Shared core | `guard` library (with the enforced `base.yaml` shipped inside the package) + `baranda-base` Docker image |
@@ -170,7 +170,8 @@ Even if the model obeys the injection, `rm` never runs.
 | 2. Each effect | Every command, file or HTTP call the tool makes | `sf project deploy validate` yes; `deploy start` to prod no |
 
 A tool that runs 3 commands produces 4 checks, linked in the same trace. Tools are declared with
-`@baranda.tool`, which applies level 1 and opens the trace automatically. Typed tools also go
+`@tool(server, guard)` (from `baranda.mcp`), which applies level 1, sets the caller identity, opens
+the trace and registers the tool on the MCP server. Typed tools also go
 through `guard`: their arguments are written by the model.
 
 Effects: `guard.run` (commands) and `guard.read` (files) in the MVP; `guard.http` in phase 2.
@@ -186,7 +187,7 @@ widen access by construction.
 | Mode | Who | May contain |
 |---|---|---|
 | `enforced` | The built-in `base.yaml`, shipped inside the package and always loaded first | `deny_commands`, per-command `deny_flags`, forced `prefix_args` / `subcommand_args` / `env`, `tools` restrictions, `limits` caps, `paths.deny_globs` |
-| `grant` | A connector's `policy.yaml`; the only mode that can allow commands | `commands` (with `subcommands`, `deny_flags`, `env`, `ok_exit_codes`), `tools` (may enable), plus anything restrictive |
+| `grant` | A connector's `policy.yaml`; the only mode that can allow commands | `commands` (with `subcommands`, `deny_flags`, `env`, `ok_exit_codes`, `non_path_flags`), `tools` (may enable), plus anything restrictive |
 | `restrict` | `user.yaml` (later: team, tenant) | `deny_commands`, `only_commands`, per-command `subcommands` (intersected) and `deny_flags`, `tools` restrictions, `limits` caps, `paths.deny_globs` |
 
 Merging: deny lists are unioned, subcommands and `one_of` sets are intersected, limits take the
@@ -227,7 +228,7 @@ through `guard`.
 Residual risks (not covered yet):
 
 - `$GIT_DIR/info/attributes` is not neutralized by `GIT_ATTR_SOURCE`; verify, and mitigate in the container (read-only mount, unprivileged user).
-- `paths.deny_globs` applies to explicit paths. `rg secret .` still scans a denied file such as `.env`; a connector should force exclusions (for example rg `--glob=!.env`) or the file should not be in the workspace.
+- `paths.deny_globs` applies to explicit paths. The `repo_reader` `search` tool excludes them from the scan (`--glob=!<pattern>`), but a generic `run(["rg", "secret", "."])` still scans a denied file such as `.env`; keep such files out of the workspace.
 - Long-option abbreviation is handled for git only; other CLIs need exact flag lists.
 
 Example connector `policy.yaml`:
@@ -277,7 +278,14 @@ container `FROM baranda-base`. One process per connector: separate permissions, 
 credentials, and each agent enables only the connectors it needs.
 
 ```python
-@baranda.tool(mcp)
+from mcp.server.mcpserver import MCPServer
+from baranda.guard import Guard
+from baranda.mcp import tool
+
+guard = Guard(workspace, [connector_policy, user_policy])
+server = MCPServer("baranda-repo-reader")
+
+@tool(server, guard)
 def git_log(since: str = "1 week ago", path: str | None = None) -> str:
     """Recent commits, optionally for a single file."""
     argv = ["git", "log", f"--since={since}", "--format=%h %an %ad %s"]
@@ -285,6 +293,10 @@ def git_log(since: str = "1 week ago", path: str | None = None) -> str:
         argv += ["--", path]
     return guard.run(argv)
 ```
+
+A `ToolError` (including a denial) becomes an MCP `is_error` result whose text is exactly the JSON
+error. `non_path_flags` in a grant marks flags whose value is data, not a path (for rg: `--regexp`,
+`--glob`), so searching for the text `/api/v1` is not mistaken for reading outside the workspace.
 
 Tool types:
 
@@ -460,7 +472,7 @@ uv run pytest
 
 1. **Skeleton:** `uv`, layout, license. *Done.*
 2. **`guard` with tests** (no API key): levels 1 and 2, layers, jail, errors, fail closed, circuit breaker, audit and spans, tool decorator (`guard.tool()`; MCP registration comes with step 3). *Done* (retries apply to `guard.http`, phase 2). Cases: path escapes (`..`, symlinks), `rm`/`git push`/`reset --hard`/`clean`, `rg --pre`, `git diff --output`, `git -c`, a `user.yaml` that tries to widen access.
-3. **`repo_reader` connector (MCP):** `read_file`, `list_dir`, `git_log`, `search`, one composite tool ("weekly summary") and `run`.
+3. **`repo_reader` connector (MCP):** `list_dir`, `read_file`, `search`, `git_log`, `git_show`, `git_blame`, a composite `weekly_summary`, and `run`; plus its skill. *Done* (stdio transport).
 4. **Docker:** `baranda-base`, connector, compose with Jaeger.
 5. **ADK agent:** Gemini + skills + `McpToolset`, exposed over A2A.
 6. **Demo:** the three scenes, a trace with latencies and an eval for the injection.
