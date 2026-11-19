@@ -1,0 +1,31 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments and tooling
+.venv/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local runtime data
+*.sqlite
+*.db
+traces/
+audit*.jsonl
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
