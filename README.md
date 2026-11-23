@@ -18,7 +18,8 @@ What sets it apart:
 
 Early development. `guard` (the policy layer) and the first connector,
 [`repo_reader`](connectors/repo_reader/) (an MCP server for read-only repository exploration), are
-implemented and tested, with Docker images and a compose stack. The ADK agent and the demo come next.
+implemented and tested, with Docker images, a compose stack and an ADK agent exposed over A2A. The
+demo comes next.
 
 [`docs/PLAN.md`](docs/PLAN.md) is the single source of truth: vision, decisions, architecture and plan.
 Exploratory ideas live in [`docs/ideas/`](docs/ideas/).
@@ -65,6 +66,34 @@ docker run -i --rm --network none -v /path/to/repo:/workspace:ro baranda-repo-re
 
 Behind a TLS-intercepting proxy, build with `--secret id=extra_ca,src=/path/to/ca.crt` (see the
 comment at the top of [`core/docker/base/Dockerfile`](core/docker/base/Dockerfile)).
+
+### Agent
+
+The `repo_reader` agent ([`agents/repo_reader/`](agents/repo_reader/)) is a Google ADK `LlmAgent` that
+reasons with Gemini and acts only through the connector's MCP tools: no shell, no code executor, no
+skill scripts. Get a key at [Google AI Studio](https://aistudio.google.com) and keep it in your
+environment as `GOOGLE_API_KEY` (never in a file in this repository).
+
+Chat in the browser (starts the connector over stdio for the repository in `BARANDA_WORKSPACE`):
+
+```bash
+BARANDA_WORKSPACE=/path/to/repo uv run adk web agents
+```
+
+Or use the compose stack's connector over HTTP:
+
+```bash
+BARANDA_MCP_URL=http://127.0.0.1:8765/mcp uv run adk web agents
+```
+
+Expose the agent over A2A (agent card at `http://127.0.0.1:8001/.well-known/agent-card.json`):
+
+```bash
+cd agents && BARANDA_WORKSPACE=/path/to/repo uv run python -m repo_reader.serve_a2a
+```
+
+`BARANDA_MODEL` picks the model (default `gemini-flash-latest`); names like `openrouter/...` go
+through LiteLLM. The tests run without a key, using a scripted model.
 
 ## License
 
