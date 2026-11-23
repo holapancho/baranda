@@ -1,38 +1,15 @@
 import asyncio
 import json
-from typing import Any, AsyncGenerator
 
-from google.adk.models.base_llm import BaseLlm
 from google.adk.models.llm_request import LlmRequest
-from google.adk.models.llm_response import LlmResponse
 from google.adk.runners import InMemoryRunner
 from google.genai import types
-from pydantic import PrivateAttr
 from starlette.testclient import TestClient
 
 from repo_reader.agent import DEFAULT_SKILLS_DIR, SKILL_TOOLS, build_agent
+from repo_reader.scripted import ScriptedLlm
 from repo_reader.serve_a2a import create_app
 from repo_reader.skills import DiskSkillRegistry
-
-
-class ScriptedLlm(BaseLlm):
-    """A fake model that plays a fixed script of tool calls, then answers. No API key needed."""
-
-    model: str = "scripted"
-    script: list[tuple[str, Any]] = []
-    _turn: int = PrivateAttr(default=0)
-    _requests: list[LlmRequest] = PrivateAttr(default_factory=list)
-
-    async def generate_content_async(self, llm_request: LlmRequest, stream: bool = False) -> AsyncGenerator[LlmResponse, None]:
-        self._requests.append(llm_request)
-        kind, payload = self.script[min(self._turn, len(self.script) - 1)]
-        self._turn += 1
-        if kind == "call":
-            name, args = payload
-            part = types.Part.from_function_call(name=name, args=args)
-        else:
-            part = types.Part.from_text(text=payload)
-        yield LlmResponse(content=types.Content(role="model", parts=[part]))
 
 
 def run_agent(agent, message: str):
@@ -54,7 +31,7 @@ def run_agent(agent, message: str):
     return asyncio.run(go())
 
 
-def function_responses(events) -> dict[str, Any]:
+def function_responses(events) -> dict:
     out = {}
     for event in events:
         for part in (event.content.parts if event.content else []) or []:
@@ -101,7 +78,7 @@ def test_model_sees_mcp_tools_and_no_script_tool(repo):
     llm = ScriptedLlm(script=[("call", ("git_log", {"since": "1 year ago"})), ("text", "done")])
     events = run_agent(build_agent(model=llm, workspace=repo), "What changed?")
 
-    tools = declared_tools(llm._requests[0])
+    tools = declared_tools(llm.requests[0])
     assert {"git_log", "read_file", "search", "run", "load_skill"} <= tools
     assert "run_skill_script" not in tools
     assert "initial commit" in json.dumps(function_responses(events)["git_log"])

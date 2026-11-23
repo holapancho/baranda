@@ -29,3 +29,4 @@ audit*.jsonl
 .idea/
 .vscode/
 .DS_Store
+demo/sample/
